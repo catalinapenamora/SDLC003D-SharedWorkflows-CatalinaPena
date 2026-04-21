@@ -30,4 +30,4 @@ jobs:
       - name: Build and Push Docker Image
         run: |
           docker build -t ${{ secrets.DOCKER_USERNAME }}/my-api:latest .
-          docker push ${{ secrets.DOCKER_USERNAME }}/my-api:latests
+          docker push ${{ secrets.DOCKER_USERNAME }}/my-api:latest
