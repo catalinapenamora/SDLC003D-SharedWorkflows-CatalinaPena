@@ -1,12 +1,20 @@
-#name: Subir la API a Docker Hub (receta reutilizable)
+# ─────────────────────────────────────────────────────────────
+# Receta compartida: “empaquetar la app y dejarla en Docker Hub”
+# Otros repositorios pueden llamarla sin copiar todo el script.
+# ─────────────────────────────────────────────────────────────
+
+name: Subir la API a Docker Hub (receta reutilizable)
 
 on:
+  # Cuando otro repo te “llama” y te pasa nombre de imagen, tag y secretos
   workflow_call:
     inputs:
       image-name:
+        description: "Cómo se llamará la imagen en Docker Hub (solo el nombre, sin tu usuario)"
         required: true
         type: string
       image-tag:
+        description: "Etiqueta que identifica esta versión (por ejemplo el identificador del commit)"
         required: true
         type: string
     secrets:
@@ -15,6 +23,7 @@ on:
       DOCKER_PASSWORD:
         required: true
 
+  # Ejecución manual desde GitHub → Actions → Run workflow
   workflow_dispatch:
     inputs:
       image-name:
@@ -27,8 +36,24 @@ on:
         type: string
 
 jobs:
-  pasos-en-la-nube:
-    name: Build and Push Docker Image
+  # Etapa 1 · Instalar dependencias y ejecutar tests
+  deps-and-test:
+    name: Dependencies and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1 · Descargar el código del repositorio
+        uses: actions/checkout@v4
+
+      - name: 2 · Instalar dependencias
+        run: npm install
+
+      - name: 3 · Ejecutar tests
+        run: npm test
+
+  # Etapa 2 · Solo corre si la etapa anterior terminó bien
+  build-and-push:
+    name: Build and push Docker image
+    needs: deps-and-test
     runs-on: ubuntu-latest
     steps:
       - name: 1 · Descargar el código del repositorio
@@ -42,11 +67,14 @@ jobs:
 
       - name: 3 · Armar la imagen y publicarla
         run: |
+          # Nombre completo en Docker Hub: tu-usuario/nombre-de-la-imagen
           IMAGEN_COMPLETA="${{ secrets.DOCKER_USERNAME }}/${{ inputs.image-name }}"
-          
+
+          # Una sola construcción, dos etiquetas: la de esta versión y "latest"
           docker build \
             -t "${IMAGEN_COMPLETA}:${{ inputs.image-tag }}" \
             -t "${IMAGEN_COMPLETA}:latest" \
             .
-            
+
+          # Sube al Hub todas las etiquetas que acabamos de crear
           docker push --all-tags "${IMAGEN_COMPLETA}"
