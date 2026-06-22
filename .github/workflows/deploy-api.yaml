@@ -126,13 +126,13 @@ jobs:
       - name: 2 · Validar el despliegue con rollout status
         run: |
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl rollout status deployment/demo-api -n demo-api --timeout=3m'
+            'sudo k3s kubectl rollout status deployment/demo-api -n demo-api --timeout=60s'
 
       - name: 3 · Si el rollout falla hacer rollback
         if: failure()   # Importante: solo se activa si el paso anterior (rollout status) da error o timeout
         run: |
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl rollout undo deployment/demo-api -n demo-api'
+            'sudo k3s kubectl rollout undo deployment/demo-api -n demo-api --timeout=60s'
 
       # ─────────────────────────────────────────────────────────────────────────────
 
