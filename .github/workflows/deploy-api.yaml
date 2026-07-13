@@ -121,7 +121,7 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
             'sudo k3s kubectl apply -f /tmp/k8s-deploy/k8s/'
 
-      - name: 2 · Despliegue Blue-Green Nativo (asanchezo)
+      - name: 2 · Despliegue Blue-Green Nativo
         run: |
           # 1. Identificar el color que actualmente atiende a los usuarios mediante el servicio demo-api
           COLOR_ACTUAL=$(ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
