@@ -121,21 +121,51 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
             'sudo k3s kubectl apply -f /tmp/k8s-deploy/'
 
-# Validar que el despliegue se hizo bien, y si no, hacer rollback a la versión anterior
-
-      - name: 2 · Validar el despliegue con rollout status
+      - name: 2 · Despliegue Blue-Green Nativo
         run: |
-          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl rollout status deployment/demo-api -n demo-api --timeout=60s'
+          # 1. Identificar el color que actualmente atiende a los usuarios
+          COLOR_ACTUAL=$(ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl get svc app-bg-service -n demo-api -o jsonpath='{.spec.selector.version}'" || echo "blue")
+          
+          if [ "$COLOR_ACTUAL" = "blue" ]; then COLOR_NUEVO="green"; else COLOR_NUEVO="blue"; fi
+          
+          echo "COLOR_ACTUAL=$COLOR_ACTUAL" >> $GITHUB_ENV
+          echo "COLOR_NUEVO=$COLOR_NUEVO" >> $GITHUB_ENV
 
-      - name: 3 · Si el rollout falla hacer rollback
-        if: failure()   # Importante: solo se activa si el paso anterior (rollout status) da error o timeout
-        run: |
+          # 2. Aplicar la estructura base en el clúster
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl rollout undo deployment/demo-api -n demo-api --timeout=60s'
+            "sudo k3s kubectl apply -f /tmp/k8s-deploy/k8s/"
+
+          # 3. Inyectar en caliente la nueva versión construida en el ambiente silencioso
+          IMAGE_COMPLETA="${{ secrets.DOCKER_USERNAME }}/${{ inputs.image-name }}:${{ inputs.image-tag }}"
+          
+          echo "Actualizando imagen en el ambiente: $COLOR_NUEVO"
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl set image deployment/app-$COLOR_NUEVO app-contenedor=$IMAGE_COMPLETA -n demo-api"
+
+          # 4. Validación de Salud (Health Check)[cite: 1]
+          echo "Esperando validación de salud para app-$COLOR_NUEVO..."
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl rollout status deployment/app-$COLOR_NUEVO -n demo-api --timeout=45s"
+
+          # 5. Cambio de Tráfico si la salud es exitosa
+          echo "Todo sano. Conmutando tráfico hacia $COLOR_NUEVO"
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl patch svc app-bg-service -n demo-api -p '{\"spec\":{\"selector\":{\"version\":\"'$COLOR_NUEVO'\"}}}'"
 
       # ─────────────────────────────────────────────────────────────────────────────
-
-      - name: Verificar pods
-        if: always()    # Cambiado a 'always()' para que muestre el estado final, haya habido éxito o rollback
-        run: ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" 'sudo k3s kubectl get pods -o wide'
+      # REMEDIACIÓN AUTOMÁTICA EN CASO DE FALLO (Ítem 3)[cite: 1]
+      # ─────────────────────────────────────────────────────────────────────────────
+      - name: 3 · Rollback Automático de Emergencia
+        if: failure()
+        run: |
+          echo "[FALLO DETECTADO] La versión nueva en $COLOR_NUEVO no superó las pruebas de salud."
+          echo "Manteniendo a los usuarios a salvo en el ambiente antiguo ($COLOR_ACTUAL)."
+          
+          # Aseguramos que el Service no se mueva del color sano
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl patch svc app-bg-service -n demo-api -p '{\"spec\":{\"selector\":{\"version\":\"'$COLOR_ACTUAL'\"}}}'"
+          
+          # Deshacemos el despliegue fallido
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            "sudo k3s kubectl rollout undo deployment/app-$COLOR_NUEVO -n demo-api"
