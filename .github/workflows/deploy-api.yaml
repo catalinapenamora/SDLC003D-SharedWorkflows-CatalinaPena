@@ -118,6 +118,11 @@ jobs:
           test -d k8s || { echo "::error::Falta carpeta k8s/ en la raíz del repo"; exit 1; }
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" 'sudo rm -rf /tmp/k8s-deploy'
           scp -o StrictHostKeyChecking=accept-new -r k8s "ubuntu@${{ inputs.k3s-server-public-ip }}:/tmp/k8s-deploy"
+          
+          # Crear el namespace si no existe antes de aplicar los manifiestos
+          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
+            'sudo k3s kubectl create namespace demo-api --dry-run=client -o yaml | sudo k3s kubectl apply -f -'
+          
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
             'sudo k3s kubectl apply -f /tmp/k8s-deploy/'
 
