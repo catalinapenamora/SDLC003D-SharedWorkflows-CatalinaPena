@@ -118,48 +118,39 @@ jobs:
           test -d k8s || { echo "::error::Falta carpeta k8s/ en la raíz del repo"; exit 1; }
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" 'sudo rm -rf /tmp/k8s-deploy'
           scp -o StrictHostKeyChecking=accept-new -r k8s "ubuntu@${{ inputs.k3s-server-public-ip }}:/tmp/k8s-deploy"
-          
-          # Crear el namespace si no existe antes de aplicar los manifiestos
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl create namespace demo-api --dry-run=client -o yaml | sudo k3s kubectl apply -f -'
-          
-          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            'sudo k3s kubectl apply -f /tmp/k8s-deploy/'
+            'sudo k3s kubectl apply -f /tmp/k8s-deploy/k8s/'
 
-      - name: 2 · Despliegue Blue-Green Nativo
+      - name: 2 · Despliegue Blue-Green Nativo (asanchezo)
         run: |
-          # 1. Identificar el color que actualmente atiende a los usuarios
+          # 1. Identificar el color que actualmente atiende a los usuarios mediante el servicio demo-api
           COLOR_ACTUAL=$(ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl get svc app-bg-service -n demo-api -o jsonpath='{.spec.selector.version}'" || echo "blue")
+            "sudo k3s kubectl get svc demo-api -o jsonpath='{.spec.selector.color}'" || echo "blue")
           
           if [ "$COLOR_ACTUAL" = "blue" ]; then COLOR_NUEVO="green"; else COLOR_NUEVO="blue"; fi
           
           echo "COLOR_ACTUAL=$COLOR_ACTUAL" >> $GITHUB_ENV
           echo "COLOR_NUEVO=$COLOR_NUEVO" >> $GITHUB_ENV
 
-          # 2. Aplicar la estructura base en el clúster
-          ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl apply -f /tmp/k8s-deploy/k8s/"
-
-          # 3. Inyectar en caliente la nueva versión construida en el ambiente silencioso
+          # 2. Inyectar en caliente la nueva versión construida en el ambiente silencioso (contenedor: api)
           IMAGE_COMPLETA="${{ secrets.DOCKER_USERNAME }}/${{ inputs.image-name }}:${{ inputs.image-tag }}"
           
           echo "Actualizando imagen en el ambiente: $COLOR_NUEVO"
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl set image deployment/app-$COLOR_NUEVO app-contenedor=$IMAGE_COMPLETA -n demo-api"
+            "sudo k3s kubectl set image deployment/demo-api-$COLOR_NUEVO api=$IMAGE_COMPLETA"
 
-          # 4. Validación de Salud (Health Check)[cite: 1]
-          echo "Esperando validación de salud para app-$COLOR_NUEVO..."
+          # 3. Validación de Salud (Health Check)
+          echo "Esperando validación de salud para demo-api-$COLOR_NUEVO..."
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl rollout status deployment/app-$COLOR_NUEVO -n demo-api --timeout=45s"
+            "sudo k3s kubectl rollout status deployment/demo-api-$COLOR_NUEVO --timeout=45s"
 
-          # 5. Cambio de Tráfico si la salud es exitosa
+          # 4. Cambio de Tráfico si la salud es exitosa
           echo "Todo sano. Conmutando tráfico hacia $COLOR_NUEVO"
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl patch svc app-bg-service -n demo-api -p '{\"spec\":{\"selector\":{\"version\":\"'$COLOR_NUEVO'\"}}}'"
+            "sudo k3s kubectl patch svc demo-api -p '{\"spec\":{\"selector\":{\"color\":\"'$COLOR_NUEVO'\"}}}'"
 
       # ─────────────────────────────────────────────────────────────────────────────
-      # REMEDIACIÓN AUTOMÁTICA EN CASO DE FALLO (Ítem 3)[cite: 1]
+      # REMEDIACIÓN AUTOMÁTICA EN CASO DE FALLO (Ítem 3)
       # ─────────────────────────────────────────────────────────────────────────────
       - name: 3 · Rollback Automático de Emergencia
         if: failure()
@@ -169,8 +160,8 @@ jobs:
           
           # Aseguramos que el Service no se mueva del color sano
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl patch svc app-bg-service -n demo-api -p '{\"spec\":{\"selector\":{\"version\":\"'$COLOR_ACTUAL'\"}}}'"
+            "sudo k3s kubectl patch svc demo-api -p '{\"spec\":{\"selector\":{\"color\":\"'$COLOR_ACTUAL'\"}}}'"
           
           # Deshacemos el despliegue fallido
           ssh -o StrictHostKeyChecking=accept-new "ubuntu@${{ inputs.k3s-server-public-ip }}" \
-            "sudo k3s kubectl rollout undo deployment/app-$COLOR_NUEVO -n demo-api"
+            "sudo k3s kubectl rollout undo deployment/demo-api-$COLOR_NUEVO"
